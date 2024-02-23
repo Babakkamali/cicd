@@ -1,0 +1,165 @@
+name: build,migrate and deploy
+on:
+  push:
+    branches:
+      - main
+
+env:
+  DOCKER_REGISTRY: registry.babakkamali.com
+  DOCKER_COMPOSE_PATH: /home/githubci/projects/projectname
+  MIGRATION_SERVICE_NAME: migration
+  STACK_NAME: projectname
+  FULL_IMAGE_NAME: egistry.babakkamali.com/organizationname/projectname/main
+
+jobs:
+  build-and-push:
+    runs-on:  runner-tag
+    steps:
+
+    - name: Checkout ${{ github.repository }} code
+      uses: actions/checkout@v2
+      with:
+        path: app
+
+    - name: Update .env file
+      working-directory: ./app
+      run: |
+        echo "" >> .env.prod
+        echo "DB_HOST=${{ secrets.DB_HOST }}" >> .env.prod
+        echo "DB_PORT=${{ secrets.DB_PORT }}" >> .env.prod
+        echo "DB_NAME=${{ secrets.DB_NAME }}" >> .env.prod
+        echo "DB_USERNAME=${{ secrets.DB_USERNAME }}" >> .env.prod
+        echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env.prod
+        echo "MONGODB_CONNECTION=mongodb://${{ secrets.DB_MONGO_USERNAME }}:${{ secrets.DB_MONGO_PASSWORD }}@${{ secrets.DB_MONGO_HOST }}:${{ secrets.DB_MONGO_PORT }}/"
+        echo "DB_MONGO_HOST=${{ secrets.DB_MONGO_HOST }}" >> .env.prod
+        echo "DB_MONGO_PORT=${{ secrets.DB_MONGO_PORT }}" >> .env.prod
+        echo "DB_MONGO_NAME=${{ secrets.DB_MONGO_NAME }}" >> .env.prod
+        echo "DB_MONGO_USERNAME=${{ secrets.DB_MONGO_USERNAME }}" >> .env.prod
+        echo "DB_MONGO_PASSWORD=${{ secrets.DB_MONGO_PASSWORD }}" >> .env.prod
+
+    - name: Log in to ${{ env.DOCKER_REGISTRY }} Registry
+      run: docker login $DOCKER_REGISTRY -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }}
+
+    - name: Build ${{ env.FULL_IMAGE_NAME }}:${{ github.sha }} 
+      working-directory: ./app
+      run: |
+        docker build -t ${{ env.FULL_IMAGE_NAME }}:${{ github.sha }} .
+
+    - name: push ${{ env.FULL_IMAGE_NAME }}:${{ github.sha }} to registry
+      run: |
+        docker push ${{ env.FULL_IMAGE_NAME }}:${{ github.sha }}
+        
+    - name: Create SSH Key File
+      run: |
+        echo "${{ secrets.SWARM_NODE1_SSH_PRIVATE_KEY }}" > ssh_key
+        chmod 600 ssh_key
+
+    - name: Remove Created Docker image
+      run: docker rmi ${{ env.FULL_IMAGE_NAME }}:${{ github.sha }}
+
+    - name: Cleanup everything
+      run: rm -rf ./*
+
+  run-migrations:
+    runs-on: runner-tag  
+    needs: build-and-push
+    steps:
+
+    - name: Checkout ${{ github.repository }} code
+      uses: actions/checkout@v2
+      with:
+        path: app
+
+    - name: Create Directory and Transfer docker-compose to Server
+      working-directory: ./app
+      run: |
+        # Create SSH Key File
+        echo "${{ secrets.SWARM_NODE1_SSH_PRIVATE_KEY }}" > ssh_key
+        chmod 600 ssh_key
+
+        # Create directory on the remote server
+        ssh -o StrictHostKeyChecking=no -p ${{ secrets.SWARM_NODE1_PORT }} -i ssh_key ${{ secrets.SWARM_NODE1_USER }}@${{ secrets.SWARM_NODE1_HOST }} "mkdir -p ${{ env.DOCKER_COMPOSE_PATH }}"
+
+        # Transfer the docker-compose file
+        scp -P ${{ secrets.SWARM_NODE1_PORT }} -o StrictHostKeyChecking=no -i ssh_key docker-compose.prod.yml ${{ secrets.SWARM_NODE1_USER }}@${{ secrets.SWARM_NODE1_HOST }}:${{ env.DOCKER_COMPOSE_PATH }}/docker-compose.yml
+
+        # Remove SSH Key File
+        rm ssh_key
+
+    - name: Pull and run migration
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SWARM_NODE1_HOST }}
+        username: ${{ secrets.SWARM_NODE1_USER }}
+        port: ${{ secrets.SWARM_NODE1_PORT }}
+        key: ${{ secrets.SWARM_NODE1_SSH_PRIVATE_KEY }}
+        script: |
+          echo ${{ env.FULL_IMAGE_NAME }}:${{ github.sha }}
+          docker login ${{ env.DOCKER_REGISTRY }} -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }}
+          docker pull ${{ env.FULL_IMAGE_NAME }}:${{ github.sha }}
+          cd ${{ env.DOCKER_COMPOSE_PATH }}
+          IMAGE_NAME=${{ env.FULL_IMAGE_NAME }}:${{ github.sha }} docker compose run ${{ env.MIGRATION_SERVICE_NAME }}
+
+    - name: Cleanup everything
+      run: rm -rf ./*
+
+  deploy-to-production:
+    runs-on: runner-tag
+    needs: [build-and-push, run-migrations]
+    steps:
+
+    - name: Pull on all servers and deploy stack
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SWARM_NODE1_HOST }}
+        username: ${{ secrets.SWARM_NODE1_USER }}
+        port: ${{ secrets.SWARM_NODE1_PORT }}
+        key: ${{ secrets.SWARM_NODE1_SSH_PRIVATE_KEY }}
+        script: |
+          docker login ${{ env.DOCKER_REGISTRY }} -u ${{ secrets.REGISTRY_USERNAME }} -p ${{ secrets.REGISTRY_PASSWORD }}
+          docker pull ${{ env.FULL_IMAGE_NAME }}:${{ github.sha }}
+          cd ${{ env.DOCKER_COMPOSE_PATH }}
+          IMAGE_NAME=${{ env.FULL_IMAGE_NAME }}:${{ github.sha }} docker stack deploy --with-registry-auth --compose-file docker-compose.yml ${{ env.STACK_NAME }}
+          docker service rm ${{ env.STACK_NAME }}_${{ env.MIGRATION_SERVICE_NAME }}
+
+  verify-deployment-health:
+    runs-on: runner-tag
+    needs: deploy-to-production
+    steps:
+
+    - name: Check Deployment Status
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SWARM_NODE1_HOST }}
+        username: ${{ secrets.SWARM_NODE1_USER }}
+        port: ${{ secrets.SWARM_NODE1_PORT }}
+        key: ${{ secrets.SWARM_NODE1_SSH_PRIVATE_KEY }}
+        script: |
+          timeout=300
+          interval=5
+          service_name="myproject-api_app"
+          new_image="${{ env.FULL_IMAGE_NAME }}:${{ github.sha }}"  # Set this to the expected new image after the update
+          
+          while [ $timeout -gt 0 ]; do
+              output=$(docker service ps --no-trunc $service_name)
+          
+              # Check if all instances are running the new image
+              if echo "$output" | grep -q "$new_image.*Running"; then
+                  running_count=$(echo "$output" | grep -c "$new_image.*Running")
+                  total_count=$(docker service inspect $service_name --format '{{ .Spec.Mode.Replicated.Replicas }}')
+          
+                  if [ "$running_count" -eq "$total_count" ]; then
+                      echo "Deployment successful."
+                      exit 0
+                  fi
+              elif echo "$output" | grep -q "Shutdown.*Failed"; then
+                  echo "Deployment failed, service rolled back."
+                  exit 1
+              fi
+          
+              sleep $interval
+              let "timeout-=interval"
+          done
+          
+          echo "Deployment check timed out."
+          exit 1
