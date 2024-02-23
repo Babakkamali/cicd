@@ -1,0 +1,41 @@
+version: "3.8" 
+
+services:
+  webapp:
+    image: ${IMAGE_NAME}
+    ports:
+      - "3000:3000"
+    deploy:
+      mode: replicated
+      replicas: 3
+      update_config:
+        parallelism: 2
+        delay: 5s
+        failure_action: rollback
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+      rollback_config:
+        parallelism: 2
+        delay: 5s
+        failure_action: pause
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healtcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - app_data:/app/data
+    networks:
+      - network-name
+
+networks:
+  network-name:
+    external: true
+
+volumes:
+  volume_name:
+    external: true

@@ -1,0 +1,67 @@
+version: '3.8'
+services:
+  appserver:
+    image: ${APP_SERVER_IMAGE_NAME}
+    deploy:
+      mode: replicated
+      replicas: 3
+      update_config:
+        parallelism: 2
+        delay: 5s
+        failure_action: rollback
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+      rollback_config:
+        parallelism: 2
+        delay: 5s
+        failure_action: pause
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000 | grep 404"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - app_data:/app/data
+    networks:
+      - network-name
+
+  webserver:
+    image: ${WEB_SERVER_IMAGE_NAME}
+    ports:
+      - "8110:80"
+    deploy:
+      mode: replicated
+      replicas: 3
+      update_config:
+        parallelism: 2
+        delay: 5s
+        failure_action: rollback
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+      rollback_config:
+        parallelism: 2
+        delay: 5s
+        failure_action: pause
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - network-name
+
+networks:
+  network-name:
+    external: true
+
+volumes:
+  volume_name:
+    external: true
