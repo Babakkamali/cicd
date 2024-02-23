@@ -33,7 +33,7 @@ variables:
 #     - develop
 #   tags:
 #     - docker-runner-tag
-    
+
 build_staging:
   stage: build
   image: docker:stable
