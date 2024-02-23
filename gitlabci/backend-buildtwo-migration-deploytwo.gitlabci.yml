@@ -1,0 +1,178 @@
+stages:          # List of stages for jobs, and their order of execution
+  # - sonarqube-check
+  - build
+  - migration
+  - deploy
+  - health
+
+variables:
+  appserver_image: ${CI_REGISTRY}/${CI_PROJECT_PATH}/appserver:$CI_COMMIT_REF_SLUG.${CI_PIPELINE_IID}
+  webserver_image: ${CI_REGISTRY}/${CI_PROJECT_PATH}/webserver:$CI_COMMIT_REF_SLUG.${CI_PIPELINE_IID}
+  dockercompose_path: /home/gitlabci/projects/projectname
+  dockercompose_path_staging: /home/gitlabci/projects/projectname-stage
+  stack_name: projectname
+  stack_name_staging: projectname-stage
+
+# sonarqube-check:
+#   stage: sonarqube-check
+#   image: 
+#     name: sonarsource/sonar-scanner-cli:5.0
+#     entrypoint: [""]
+#   variables:
+#     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
+#     GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
+#   cache:
+#     key: "${CI_JOB_NAME}"
+#     paths:
+#       - .sonar/cache
+#   script: 
+#     - sonar-scanner
+#   allow_failure: true
+#   only:
+#     - merge_requests
+#     - main
+#     - develop
+#   tags:
+#     - docker-runner-tag
+    
+build_staging:
+  stage: build
+  image: docker:stable
+  only:
+    - develop
+  retry: 
+    max: 3
+  script:    
+    - chmod +x substitute_env_vars.sh # Add this line to add execute permissions
+    - ./substitute_env_vars.sh # call the script to replace env variables here
+    - "docker login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}"
+    - "docker build -f Dockerfile.staging --build-arg APP_ENV=staging --build-arg ENV_FILE=.env.staging --target builder -t ${appserver_image} ."
+    - "docker push ${appserver_image}"
+  tags:    
+    - docker-runner-tag
+  environment:
+    name: staging
+    
+build_production:
+  stage: build
+  image: docker:stable
+  only:
+    - main
+  retry: 
+    max: 3
+  script:    
+    - chmod +x substitute_env_vars.sh # Add this line to add execute permissions
+    - ./substitute_env_vars.sh # call the script to replace env variables here
+    - "docker login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}"
+    - "docker build -f Dockerfile.prod --build-arg APP_ENV=production --build-arg ENV_FILE=.env.prod --target builder -t ${appserver_image} ."
+    - "docker build -f Dockerfile.prod --build-arg APP_ENV=production --build-arg ENV_FILE=.env.prod --target nginx -t ${webserver_image} ."
+    - "docker push ${appserver_image}"
+    - "docker push ${webserver_image}"
+  tags:    
+    - docker-runner-tag
+  environment:
+    name: production
+
+migration_staging:
+  stage: migration
+  script:
+    - "docker login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}"
+    - docker pull ${appserver_image}
+    - docker run --rm ${appserver_image} /bin/sh -c "your migration script goes here"
+  tags:
+    - shell-runner-tag
+  only:
+    - develop
+  environment:
+    name: staging  # Set the environment name for the 'deploy' job
+  allow_failure: false
+
+migration_production:
+  stage: migration
+  script:
+    - "docker login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}"
+    - docker pull ${appserver_image}
+    - docker run --rm ${appserver_image} /bin/sh -c "your migration script goes here"
+  tags:
+    - shell-runner-tag
+  only:
+    - main
+  environment:
+    name: production 
+  allow_failure: false
+  when: manual 
+
+deploy_staging:
+  stage: deploy
+  script:
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "mkdir -p ${dockercompose_path_staging} 2> /dev/null"
+    - scp -o StrictHostKeyChecking=no docker-compose.staging.yml $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER:${dockercompose_path_staging}/docker-compose.yml
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER2 "docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} && docker pull ${appserver_image}"
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} && docker pull ${appserver_image} && cd ${dockercompose_path_staging} && IMAGE_NAME=${appserver_image} docker stack deploy --with-registry-auth --compose-file docker-compose.yml ${stack_name_staging}" 
+  tags:
+    - shell-runner-tag
+  only:
+    - develop
+  environment:
+    name: staging # Set the environment name for the 'deploy' job
+    url: stage.babakkamali.com
+
+
+deploy_main:
+  stage: deploy
+  script:
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "mkdir -p ${dockercompose_path} 2> /dev/null"
+    - scp -o StrictHostKeyChecking=no docker-compose.prod.yml $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER:${dockercompose_path}/docker-compose.yml
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER2 "docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} && docker pull ${appserver_image} && docker pull ${webserver_image}"
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} && docker pull ${appserver_image} && docker pull ${webserver_image} && cd ${dockercompose_path} && APP_SERVER_IMAGE_NAME=${appserver_image} WEB_SERVER_IMAGE_NAME=${webserver_image} docker stack deploy --with-registry-auth --compose-file docker-compose.yml ${stack_name}" 
+  tags:
+    - shell-runner-tag
+  only:
+    - main
+  needs:
+    - job: migration_production
+      optional: false
+  allow_failure: false
+  environment:
+    name: production
+    url: prod.babakkamali.com
+
+healthcheck_staging:
+  stage: health
+  variables:
+    TIMEOUT: "150"
+    INTERVAL: "5"
+    SERVICE_NAME: "appserver-stage"
+  script:
+    - scp -o StrictHostKeyChecking=no healthcheck.sh $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER:${dockercompose_path_staging}/healthcheck.sh
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "bash ${dockercompose_path_staging}/healthcheck.sh $TIMEOUT $INTERVAL '${stack_name_staging}_$SERVICE_NAME' '${appserver_image}'"
+  tags:
+    - shell-runner-tag
+  only:
+    - develop
+  environment:
+    name: staging
+    url: stage.babakkamali.com
+
+healthcheck_prod:
+  stage: health
+  variables:
+    TIMEOUT: "150"
+    INTERVAL: "5"
+    SERVICE_NAME: "appserver"
+    SERVICE_NAME2: "webserver"
+  script:
+    - scp -o StrictHostKeyChecking=no healthcheck.sh $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER:${dockercompose_path}/healthcheck.sh
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "bash ${dockercompose_path}/healthcheck.sh $TIMEOUT $INTERVAL '${stack_name}_$SERVICE_NAME' '${appserver_image}'"
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "bash ${dockercompose_path}/healthcheck.sh $TIMEOUT $INTERVAL '${stack_name}_$SERVICE_NAME2' '${webserver_image}'"
+  tags:
+    - shell-runner-tag
+  only:
+    - main
+  needs:
+    - job: deploy_main
+      optional: false
+  allow_failure: false
+  environment:
+    name: production
+    url: prod.babakkamali.com
