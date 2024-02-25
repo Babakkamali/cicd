@@ -47,7 +47,9 @@ build_staging:
     - ./substitute_env_vars.sh # call the script to replace env variables here
     - "docker login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}"
     - "docker build -f Dockerfile.staging --build-arg APP_ENV=staging --build-arg ENV_FILE=.env.staging --target builder -t ${appserver_image} ."
+    - "docker build -f Dockerfile.prod --build-arg APP_ENV=production --build-arg ENV_FILE=.env.prod --target nginx -t ${webserver_image} ."
     - "docker push ${appserver_image}"
+    - "docker push ${webserver_image}"
   tags:    
     - docker-runner-tag
   environment:
@@ -107,8 +109,8 @@ deploy_staging:
   script:
     - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "mkdir -p ${dockercompose_path_staging} 2> /dev/null"
     - scp -o StrictHostKeyChecking=no docker-compose.staging.yml $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER:${dockercompose_path_staging}/docker-compose.yml
-    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER2 "docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} && docker pull ${appserver_image}"
-    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} && docker pull ${appserver_image} && cd ${dockercompose_path_staging} && IMAGE_NAME=${appserver_image} docker stack deploy --with-registry-auth --compose-file docker-compose.yml ${stack_name_staging}" 
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER2 "docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} && docker pull ${appserver_image} && docker pull ${webserver_image}"
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "docker login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} && docker pull ${appserver_image} && docker pull ${webserver_image} && cd ${dockercompose_path_staging} && APP_SERVER_IMAGE_NAME=${appserver_image} WEB_SERVER_IMAGE_NAME=${webserver_image} docker stack deploy --with-registry-auth --compose-file docker-compose.yml ${stack_name_staging}" 
   tags:
     - shell-runner-tag
   only:
@@ -143,9 +145,11 @@ healthcheck_staging:
     TIMEOUT: "150"
     INTERVAL: "5"
     SERVICE_NAME: "appserver-stage"
+    SERVICE_NAME2: "webserver-stage"
   script:
     - scp -o StrictHostKeyChecking=no healthcheck.sh $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER:${dockercompose_path_staging}/healthcheck.sh
     - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "bash ${dockercompose_path_staging}/healthcheck.sh $TIMEOUT $INTERVAL '${stack_name_staging}_$SERVICE_NAME' '${appserver_image}'"
+    - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "bash ${dockercompose_path_staging}/healthcheck.sh $TIMEOUT $INTERVAL '${stack_name_staging}_$SERVICE_NAME2' '${webserver_image}'"
   tags:
     - shell-runner-tag
   only:
