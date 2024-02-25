@@ -40,7 +40,7 @@ build_staging:
   only:
     - develop
   retry: 
-    max: 3
+    max: 2
   script:    
     - chmod +x substitute_env_vars.sh # Add this line to add execute permissions
     - ./substitute_env_vars.sh # call the script to replace env variables here
@@ -58,7 +58,7 @@ build_production:
   only:
       - main
   retry: 
-    max: 3
+    max: 2
   script:    
       - chmod +x substitute_env_vars.sh # Add this line to add execute permissions
       - ./substitute_env_vars.sh # call the script to replace env variables here

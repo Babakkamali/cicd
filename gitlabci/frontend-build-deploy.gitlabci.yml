@@ -39,7 +39,7 @@ build_staging:
   only:
     - develop
   retry: 
-    max: 3
+    max: 2
   script:
     - 'docker login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}'
     - 'docker build -t ${appserver_image} --build-arg ENV_FILE=.env.staging .'
@@ -55,7 +55,7 @@ build_production:
   only:
     - main
   retry: 
-    max: 3
+    max: 2
   script:
     - 'docker login -u ${CI_REGISTRY_USER} -p ${CI_JOB_TOKEN} ${CI_REGISTRY}'
     - 'docker build -t ${appserver_image} --build-arg ENV_FILE=.env.prod .'
