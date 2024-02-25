@@ -78,7 +78,7 @@ deploy_staging:
     - develop
   environment:
     name: staging 
-    url: stage.babakkamali.com
+    url: https://stage.babakkamali.com
 
 deploy_main:
   stage: deploy
@@ -94,7 +94,7 @@ deploy_main:
   allow_failure: false
   environment:
     name: production
-    url: prod.babakkamali.com
+    url: https://prod.babakkamali.com
   when: manual
 
 healthcheck_staging:
@@ -112,7 +112,7 @@ healthcheck_staging:
     - develop
   environment:
     name: staging
-    url: stage.babakkamali.com
+    url: https://stage.babakkamali.com
 
 healthcheck_prod:
   stage: health
@@ -133,4 +133,4 @@ healthcheck_prod:
   allow_failure: false
   environment:
     name: production
-    url: prod.babakkamali.com
+    url: https://prod.babakkamali.com
