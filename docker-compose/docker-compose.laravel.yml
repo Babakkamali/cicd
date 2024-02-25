@@ -1,7 +1,7 @@
 version: '3'
 
 services:
-  appserver-stage:
+  appserver:
     build:
       context: .
       dockerfile: docker/php/Dockerfile.mssql
@@ -9,7 +9,7 @@ services:
         ENV_FILE: .env
     image: atlas-backend-appserver
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://webserver-stage/health"]
+      test: ["CMD-SHELL", "SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -17,7 +17,7 @@ services:
       - ./storage:/var/www/html/storage
       - ./bootstrap/cache:/var/www/html/bootstrap/cache
 
-  webserver-stage:
+  webserver:
     build:
       context: .
       dockerfile: docker/nginx/Dockerfile.staging
