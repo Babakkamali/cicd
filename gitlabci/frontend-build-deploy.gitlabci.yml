@@ -102,7 +102,7 @@ healthcheck_staging:
   variables:
     TIMEOUT: "150"
     INTERVAL: "5"
-    SERVICE_NAME: "appserver"
+    SERVICE_NAME: "appserver-stage"
   script:
     - scp -o StrictHostKeyChecking=no healthcheck.sh $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER:${dockercompose_path_staging}/healthcheck.sh
     - ssh -o StrictHostKeyChecking=no $SWARM_DEPLOY_USER@$SWARM_DEPLOY_SERVER "bash ${dockercompose_path_staging}/healthcheck.sh $TIMEOUT $INTERVAL '${stack_name_staging}_$SERVICE_NAME' '${appserver_image}'"
