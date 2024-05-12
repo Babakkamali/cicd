@@ -13,24 +13,26 @@ cache: # this section will cache the specified directories based on branch name 
     - $CI_PROJECT_DIR/.pub-cache/
     - $CI_PROJECT_DIR/.gradle/
 
-.build_template: &build_template
+.build_script: &build_script
+  - export PUB_CACHE=$CI_PROJECT_DIR/.pub-cache # set cache dir for pub
+  - export PATH="$PATH":"$PUB_CACHE/bin" # set cache dir for pub
+  - export GRADLE_USER_HOME=$CI_PROJECT_DIR/.gradle # set cache dir for gradle
+  - export SDK_REGISTRY_TOKEN=$SDK_REGISTRY_TOKEN # set openmap sdk registry token as env variable
+  - echo "Setting up Proxy for Gradle" # set http proxy for gradle as well
+  - echo "systemProp.http.proxyHost=$HTTP_PROXY_HOST" >> android/gradle.properties # gradle proxy
+  - echo "systemProp.http.proxyPort=$HTTP_PROXY_PORT" >> android/gradle.properties # gradle proxy
+  - echo "systemProp.https.proxyHost=$HTTP_PROXY_HOST" >> android/gradle.properties # gradle proxy
+  - echo "systemProp.https.proxyPort=$HTTP_PROXY_PORT" >> android/gradle.properties # gradle proxy
+  - echo "Downloading secure files..." # download project secure files (key.properties,jks file)
+  - chmod +x get_secure_files.sh # give execute permission to download secure files
+  - ./get_secure_files.sh # download secure files to android dir
+  - flutter pub get # update flutter packages
+
+.build_template:
   image: ghcr.io/cirruslabs/flutter:3.19.0
   variables: *default_variables
   stage: build
-  script:
-    - export PUB_CACHE=$CI_PROJECT_DIR/.pub-cache # set cache dir for pub
-    - export PATH="$PATH":"$PUB_CACHE/bin" # set cache dir for pub
-    - export GRADLE_USER_HOME=$CI_PROJECT_DIR/.gradle # set cache dir for gradle
-    - export SDK_REGISTRY_TOKEN=$SDK_REGISTRY_TOKEN # set openmap sdk registry token as env variable
-    - echo "Setting up Proxy for Gradle" # set http proxy for gradle as well
-    - echo "systemProp.http.proxyHost=$HTTP_PROXY_HOST" >> android/gradle.properties # gradle proxy
-    - echo "systemProp.http.proxyPort=$HTTP_PROXY_PORT" >> android/gradle.properties # gradle proxy
-    - echo "systemProp.https.proxyHost=$HTTP_PROXY_HOST" >> android/gradle.properties # gradle proxy
-    - echo "systemProp.https.proxyPort=$HTTP_PROXY_PORT" >> android/gradle.properties # gradle proxy
-    - echo "Downloading secure files..." # download project secure files (key.properties,jks file)
-    - chmod +x get_secure_files.sh # give execute permission to download secure files
-    - ./get_secure_files.sh # download secure files to android dir
-    - flutter pub get # update flutter packages
+  script: *build_script
   artifacts:
     paths:
       - build/app/outputs/flutter-apk/*.apk
@@ -41,7 +43,7 @@ cache: # this section will cache the specified directories based on branch name 
 build_stage_apk:
   extends: .build_template
   script:
-    - *build_template.script
+    - *build_script
     - flutter build apk --flavor stage -t lib/main_stage.dart # build the apk for stage
   only:
     - RC
@@ -50,7 +52,7 @@ build_stage_apk:
 build_production_apk:
   extends: .build_template
   script:
-    - *build_template.script
+    - *build_script
     - flutter build apk --flavor production -t lib/main_production.dart # build the apk for production
   only:
     - master
